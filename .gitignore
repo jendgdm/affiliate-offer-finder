@@ -12,4 +12,5 @@ build/
 .venv/
 venv/
 .DS_Store
-.streamlit/
+.streamlit/secrets.toml
+.streamlit/*.log
