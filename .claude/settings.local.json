@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source:*)",
+      "Bash(streamlit run:*)",
+      "Bash(python:*)",
+      "Bash(PYTHONPATH=/Users/jen/Digidom/claude_code/TOOL/app:$PYTHONPATH streamlit run:*)"
+    ]
+  }
+}
