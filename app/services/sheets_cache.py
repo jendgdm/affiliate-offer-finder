@@ -34,10 +34,13 @@ class SheetsCacheService:
     ]
 
     def __init__(self):
-        creds = Credentials.from_service_account_file(
-            Config.GOOGLE_SERVICE_ACCOUNT_JSON,
-            scopes=self.SCOPES,
-        )
+        sa_value = Config.GOOGLE_SERVICE_ACCOUNT_JSON
+        # Support both file path and inline JSON (for Railway/cloud deployment)
+        if sa_value.strip().startswith('{'):
+            info = json.loads(sa_value)
+            creds = Credentials.from_service_account_info(info, scopes=self.SCOPES)
+        else:
+            creds = Credentials.from_service_account_file(sa_value, scopes=self.SCOPES)
         self.client = gspread.authorize(creds)
         self.spreadsheet = self.client.open_by_url(Config.GOOGLE_SHEET_URL)
 
