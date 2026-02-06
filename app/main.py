@@ -151,7 +151,10 @@ st.markdown("""
     }
 
     section[data-testid="stSidebar"] > div {
-        padding-top: 2rem;
+        padding-top: 0 !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
+        padding-top: 0 !important;
     }
 
     /* Info boxes */
@@ -329,14 +332,61 @@ def strip_html_tags(text):
     clean_text = re.sub(r'\s+', ' ', clean_text).strip()
     return clean_text
 
-# Initialize aggregator
-# @st.cache_resource  # Temporarily disabled to force reload
+# Initialize aggregator (cached so Google Sheets connection is reused across reruns)
+@st.cache_resource
 def get_aggregator():
     """Initialize and cache the aggregator."""
     return OfferAggregator()
 
 def main():
     """Main application."""
+
+    # ------------------------------------------------------------------
+    # Google OAuth Login Gate (skip if not configured)
+    # ------------------------------------------------------------------
+    user_name = None
+    user_email = None
+
+    if Config.is_oauth_configured():
+        from streamlit_google_auth import Authenticate
+
+        authenticator = Authenticate(
+            secret_credentials_path=Config.GOOGLE_OAUTH_CLIENT_JSON,
+            cookie_name='aff_finder_auth',
+            cookie_key=Config.COOKIE_SECRET,
+            redirect_uri=Config.OAUTH_REDIRECT_URI,
+        )
+        authenticator.check_authentification()
+
+        if not st.session_state.get('connected'):
+            # Show login page
+            st.markdown("""
+            <div style="text-align: center; padding: 80px 20px;">
+                <h1 style="font-size: 48px; margin-bottom: 16px; color: #2563eb; font-weight: 700;">
+                    <i class="bi bi-cash-coin"></i> Affiliate Offer Finder
+                </h1>
+                <p style="font-size: 18px; color: #64748b; margin-bottom: 40px;">
+                    Sign in with your company email to continue
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col2:
+                authenticator.login()
+            st.stop()
+
+        # Check email domain restriction
+        user_email = st.session_state['user_info'].get('email', '')
+        user_name = st.session_state['user_info'].get('name', '')
+
+        if Config.ALLOWED_EMAIL_DOMAINS:
+            email_domain = user_email.split('@')[-1] if '@' in user_email else ''
+            if email_domain not in Config.ALLOWED_EMAIL_DOMAINS:
+                allowed = ', '.join(f'@{d}' for d in Config.ALLOWED_EMAIL_DOMAINS)
+                st.error(f"Access restricted to {allowed} emails. You signed in as {user_email}.")
+                if st.button("Sign out"):
+                    authenticator.logout()
+                st.stop()
 
     # Hero section with Bootstrap styling
     st.markdown("""
@@ -352,117 +402,100 @@ def main():
 
     aggregator = get_aggregator()
 
+    # =====================================================================
+    # TEMPORARY: Floating Chat Feedback (remove this block when no longer needed)
+    # =====================================================================
+    # =====================================================================
+    # END: Floating Chat Feedback
+    # =====================================================================
+
     # Sidebar - Configuration & Filters
     with st.sidebar:
         # Logo/Header
         st.markdown("""
-        <div style="text-align: center; padding: 20px 0; border-bottom: 2px solid #e2e8f0; margin-bottom: 24px;">
-            <h2 style="color: #2563eb; margin: 0; font-size: 24px;">
+        <div style="text-align: center; padding: 0 0 8px 0; border-bottom: 2px solid #e2e8f0; margin: 0 0 8px 0;">
+            <h2 style="color: #2563eb; margin: 0; font-size: 20px;">
                 <i class="bi bi-funnel"></i> Filters
             </h2>
         </div>
         """, unsafe_allow_html=True)
 
         # Mode Selection
-        st.markdown('<p style="font-weight: 600; color: #475569; margin-bottom: 12px; font-size: 15px;"><i class="bi bi-search"></i> Search Mode</p>', unsafe_allow_html=True)
-
         search_mode = st.radio(
-            "Mode",
+            "Search Mode",
             options=["All", "Direct", "Blog Post"],
-            index=0,  # Default to "All"
+            index=0,
             help="All = Show everything | Direct = Direct brand affiliate programs | Blog Post = Articles listing multiple programs",
-            label_visibility="collapsed"
+            horizontal=True
         )
-
-        st.divider()
-
-        # Search Filters
-        st.markdown('<p style="font-weight: 600; color: #475569; margin-bottom: 12px; font-size: 15px;"><i class="bi bi-sliders"></i> Search Options</p>', unsafe_allow_html=True)
 
         keyword = st.text_input(
             "Niche/Keyword",
             placeholder="e.g., VPN, hosting, software",
-            help="Enter your niche - we'll automatically search for affiliate programs"
+            help="Enter your niche"
         )
 
-        limit = st.number_input(
-            "Max Results",
-            min_value=5,
-            max_value=200,
-            value=50,
-            step=5
-        )
+        limit = st.number_input("Max Results", min_value=5, max_value=200, value=50, step=5)
 
-        st.markdown('<div style="margin-top: 24px;"></div>', unsafe_allow_html=True)
         search_triggered = st.button("🔎 Search Offers", type="primary", use_container_width=True)
+        force_refresh = st.button("🔄 Force Refresh", help="Bypass cache", use_container_width=True)
+
+        # User info & logout (if logged in)
+        if user_name:
+            st.markdown("---")
+            st.markdown(f"**{user_name}**  \n{user_email}")
+            if st.button("Sign out", use_container_width=True):
+                authenticator.logout()
+
+        # (Feedback form moved to floating chat bubble)
 
     # Main content header
     st.markdown('<h2 style="color: #1e293b; font-weight: 700; margin-bottom: 24px;"><i class="bi bi-grid-3x3-gap"></i> Search Results</h2>', unsafe_allow_html=True)
 
-    # Detect mode change and clear session
-    if 'previous_mode' in st.session_state and st.session_state.previous_mode != search_mode:
-        # Mode changed - clear results to force new search
-        if 'offers' in st.session_state:
-            del st.session_state.offers
-    st.session_state.previous_mode = search_mode
-
-    # Detect keyword change and clear session
+    # Detect keyword change — only re-fetch when keyword changes (not mode)
     if 'previous_keyword' in st.session_state and st.session_state.previous_keyword != keyword:
-        # Keyword changed - clear results to force new search
-        if 'offers' in st.session_state:
-            del st.session_state.offers
+        if 'all_offers' in st.session_state:
+            del st.session_state.all_offers
     st.session_state.previous_keyword = keyword
 
-    # Load offers automatically on first visit or when search button is clicked
-    if search_triggered or 'offers' not in st.session_state:
-        # Show modal overlay during search
-        modal_placeholder = st.empty()
-        modal_placeholder.markdown("""
-        <div class="search-modal">
-            <div class="search-modal-content">
-                <div class="modal-spinner"></div>
-                <div class="modal-title">Searching Offers</div>
-                <div class="modal-subtitle">
-                    Scanning top affiliate programs and extracting commission details...<br>
-                    This may take 10-15 seconds.
-                </div>
+    # Fetch all offers once, then filter by mode (mode change = instant, no re-fetch)
+    need_fetch = search_triggered or force_refresh or 'all_offers' not in st.session_state
+
+    if need_fetch:
+        # Show loading spinner immediately while data loads
+        loading_placeholder = st.empty()
+        loading_placeholder.markdown("""
+        <div style="display: flex; align-items: center; justify-content: center; padding: 60px 20px;">
+            <div style="text-align: center;">
+                <div style="width: 50px; height: 50px; border: 4px solid #e5e7eb; border-top: 4px solid #2563eb;
+                            border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px;"></div>
+                <p style="color: #475569; font-size: 16px; font-weight: 500;">Loading offers...</p>
             </div>
         </div>
+        <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
         """, unsafe_allow_html=True)
 
-        # Perform search
-        # Always search discovery networks
         all_offers = aggregator.search_discovery_networks(
             keyword=keyword if keyword else None,
-            limit=limit * 2,  # Get more to filter
-            analyze_potential=True  # Always analyze potential with Google Trends
+            limit=limit * 2,
+            analyze_potential=True,
+            force_refresh=force_refresh
         )
 
-        # Filter by category based on mode
-        if search_mode == "Direct":
-            offers = [o for o in all_offers if o.category == "Direct Brand"]
-        elif search_mode == "Blog Post":
-            offers = [o for o in all_offers if o.category == "Blog Post"]
-        elif search_mode == "All":
-            offers = all_offers
-        else:
-            offers = all_offers
+        st.session_state.all_offers = all_offers
+        loading_placeholder.empty()
 
-        # Limit results
-        offers = offers[:limit]
-
-        st.session_state.offers = offers
-        st.session_state.search_mode = search_mode
-
-        # Clear modal
-        modal_placeholder.empty()
-
-        # DEBUG: Show analysis status
-        analyzed_count = sum(1 for o in offers if o.potential_score is not None)
-        if analyzed_count > 0:
-            st.success(f"✓ Potential analysis completed for {analyzed_count}/{len(offers)} offers")
-        else:
-            st.warning("⚠️ Potential analysis: No data available")
+    # Filter by mode from in-memory cache (instant, no API/sheets call)
+    all_offers = st.session_state.get('all_offers', [])
+    if search_mode == "Direct":
+        offers = [o for o in all_offers if o.category == "Direct Brand"]
+    elif search_mode == "Blog Post":
+        offers = [o for o in all_offers if o.category == "Blog Post"]
+    else:
+        offers = all_offers
+    offers = offers[:limit]
+    st.session_state.offers = offers
+    st.session_state.search_mode = search_mode
 
     # Display results
     if 'offers' in st.session_state and st.session_state.offers:
@@ -493,6 +526,16 @@ def main():
             """, unsafe_allow_html=True)
         else:
             st.success(f"Found {len(offers)} offers")
+
+        # Show last updated date
+        if aggregator.sheets_cache:
+            effective_kw = keyword if keyword else "software"
+            try:
+                last_updated = aggregator.sheets_cache.get_last_updated(effective_kw)
+                if last_updated:
+                    st.caption(f"Last updated: {last_updated.strftime('%B %d, %Y')}")
+            except Exception:
+                pass
 
         # Build all cards in one HTML block to avoid Streamlit containers
         all_cards_html = '<div>'
@@ -703,6 +746,177 @@ def main():
             </p>
         </div>
         """, unsafe_allow_html=True)
+
+    # =====================================================================
+    # TEMPORARY: Floating Chat Feedback Bubble (remove block when not needed)
+    # =====================================================================
+    if aggregator.sheets_cache:
+        # Server-side: check for feedback in query params FIRST (before rendering)
+        import urllib.parse
+        params = st.query_params
+
+        if params.get("fb_send"):
+            fb_name = urllib.parse.unquote(params.get("fb_name", ""))
+            fb_msg = urllib.parse.unquote(params.get("fb_msg", ""))
+            if fb_msg.strip():
+                try:
+                    aggregator.sheets_cache.append_feedback(fb_name, fb_msg)
+                    st.success("Feedback sent! Thank you.")
+                except Exception as e:
+                    st.error(f"Failed to send feedback: {e}")
+            # Clear the query params so it doesn't re-submit on refresh
+            st.query_params.clear()
+
+        # Floating bubble injected via components.html (scripts execute here, unlike st.markdown)
+        import streamlit.components.v1 as components
+        _fb_user = html.escape(user_name or '')
+        _fb_html = """
+        <script>
+        (function() {
+            var doc = window.parent.document;
+
+            // Only inject once
+            if (doc.getElementById('fb-bubble')) return;
+
+            // Inject styles into parent
+            var style = doc.createElement('style');
+            style.textContent = `
+                #fb-bubble {
+                    position: fixed;
+                    bottom: 24px;
+                    right: 24px;
+                    z-index: 100000;
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 50%;
+                    background: linear-gradient(135deg, #6366f1, #4f46e5);
+                    color: white;
+                    border: none;
+                    font-size: 24px;
+                    cursor: pointer;
+                    box-shadow: 0 4px 16px rgba(99,102,241,0.45);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.2s;
+                }
+                #fb-bubble:hover {
+                    transform: scale(1.1);
+                    box-shadow: 0 6px 24px rgba(99,102,241,0.55);
+                }
+                #fb-popup {
+                    display: none;
+                    position: fixed;
+                    bottom: 92px;
+                    right: 24px;
+                    z-index: 100000;
+                    width: 340px;
+                    background: white;
+                    border-radius: 16px;
+                    box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+                    padding: 24px;
+                    border: 1px solid #e5e7eb;
+                }
+                #fb-popup.open { display: block; }
+                #fb-popup h3 {
+                    margin: 0 0 16px;
+                    font-size: 17px;
+                    font-weight: 700;
+                    color: #1e293b;
+                    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                }
+                #fb-popup input, #fb-popup textarea {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border: 1px solid #d1d5db;
+                    border-radius: 8px;
+                    font-size: 14px;
+                    font-family: inherit;
+                    margin-bottom: 10px;
+                    box-sizing: border-box;
+                    outline: none;
+                }
+                #fb-popup input:focus, #fb-popup textarea:focus {
+                    border-color: #6366f1;
+                    box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+                }
+                #fb-popup textarea { height: 80px; resize: vertical; }
+                #fb-send-btn {
+                    width: 100%;
+                    padding: 11px;
+                    background: linear-gradient(135deg, #6366f1, #4f46e5);
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    font-family: inherit;
+                }
+                #fb-send-btn:hover { opacity: 0.9; }
+                #fb-status { margin-top: 8px; font-size: 13px; text-align: center; }
+            `;
+            doc.head.appendChild(style);
+
+            // Create bubble
+            var bubble = doc.createElement('div');
+            bubble.id = 'fb-bubble';
+            bubble.textContent = String.fromCodePoint(0x1F4AC);
+            doc.body.appendChild(bubble);
+
+            // Create popup
+            var popup = doc.createElement('div');
+            popup.id = 'fb-popup';
+            var fbUser = '__FB_USER__';
+            var nameField = fbUser
+                ? '<input type="text" id="fb-name" value="' + fbUser + '" readonly style="background:#f1f5f9;color:#475569;">'
+                : '<input type="text" id="fb-name" placeholder="Your name" required>';
+            popup.innerHTML = '<h3>Feedback</h3>'
+                + nameField
+                + '<textarea id="fb-msg" placeholder="What do you think? Any issues or suggestions?"></textarea>'
+                + '<button id="fb-send-btn">Send Feedback</button>'
+                + '<div id="fb-status"></div>';
+            doc.body.appendChild(popup);
+
+            // Toggle popup on bubble click
+            bubble.addEventListener('click', function() {
+                popup.classList.toggle('open');
+            });
+
+            // Submit feedback
+            doc.getElementById('fb-send-btn').addEventListener('click', function() {
+                var name = doc.getElementById('fb-name').value.trim();
+                var msg = doc.getElementById('fb-msg').value.trim();
+                var status = doc.getElementById('fb-status');
+                if (!name) {
+                    status.innerHTML = '<span style="color:#f59e0b;">Please enter your name</span>';
+                    return;
+                }
+                if (!msg) {
+                    status.innerHTML = '<span style="color:#f59e0b;">Please enter a message</span>';
+                    return;
+                }
+                status.innerHTML = '<span style="color:#6366f1;">Sending...</span>';
+                doc.getElementById('fb-name').value = '';
+                doc.getElementById('fb-msg').value = '';
+                var url = new URL(window.parent.location.href);
+                url.searchParams.set('fb_name', encodeURIComponent(name));
+                url.searchParams.set('fb_msg', encodeURIComponent(msg));
+                url.searchParams.set('fb_send', '1');
+                setTimeout(function() {
+                    status.innerHTML = '<span style="color:#10b981;">&#10003; Sent! Thank you.</span>';
+                    setTimeout(function() {
+                        window.parent.location.href = url.toString();
+                    }, 800);
+                }, 200);
+            });
+        })();
+        </script>
+        """.replace('__FB_USER__', _fb_user)
+        components.html(_fb_html, height=0)
+    # =====================================================================
+    # END: Floating Chat Feedback Bubble
+    # =====================================================================
 
 if __name__ == "__main__":
     main()

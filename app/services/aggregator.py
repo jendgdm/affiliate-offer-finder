@@ -6,6 +6,7 @@ from networks.offervault import OfferVaultNetwork
 from networks.affbank import AffbankNetwork
 from services.keyword_analyzer import KeywordAnalyzer
 from services.brand_metrics import BrandMetricsAnalyzer
+from services.sheets_cache import SheetsCacheService
 from config import Config
 
 
@@ -18,6 +19,15 @@ class OfferAggregator:
         self.discovery_networks = []
         self.keyword_analyzer = KeywordAnalyzer()
         self.brand_metrics_analyzer = BrandMetricsAnalyzer()
+
+        # Google Sheets cache
+        self.sheets_cache = None
+        if Config.is_sheets_configured():
+            try:
+                self.sheets_cache = SheetsCacheService()
+                print("Google Sheets cache: Connected")
+            except Exception as e:
+                print(f"Google Sheets cache: Failed to connect - {e}")
 
         # Impact removed per user request
         # if Config.is_impact_configured():
@@ -151,20 +161,38 @@ class OfferAggregator:
         self,
         keyword: Optional[str] = None,
         limit: int = 20,
-        analyze_potential: bool = True
+        analyze_potential: bool = True,
+        force_refresh: bool = False
     ) -> List[Offer]:
         """
-        Search discovery networks (like OfferVault) to find NEW programs.
+        Search discovery networks with Google Sheets daily caching.
 
-        These are offers you're NOT currently part of - for discovery purposes.
+        If a Google Sheet cache is configured and today's data exists,
+        reads from the sheet instead of calling SERP API.
 
         Args:
             keyword: Search keyword
             limit: Max results
-            analyze_potential: Whether to analyze search volume/potential (default True)
+            analyze_potential: Whether to analyze search volume/potential
+            force_refresh: Bypass cache and fetch fresh data from APIs
         """
-        all_offers = []
+        effective_keyword = keyword if keyword else "software"
 
+        # Check Google Sheets cache first
+        if self.sheets_cache and not force_refresh:
+            try:
+                if self.sheets_cache.is_cache_fresh(effective_keyword):
+                    print(f"Cache HIT: Reading '{effective_keyword}' from Google Sheets")
+                    cached_offers = self.sheets_cache.read_offers(effective_keyword)
+                    if cached_offers:
+                        print(f"Cache: Loaded {len(cached_offers)} offers from sheet")
+                        return cached_offers
+                    print("Cache: Sheet tab exists but is empty, fetching fresh data")
+            except Exception as e:
+                print(f"Cache read error: {e}")
+
+        # Cache MISS or force refresh — fetch from APIs
+        all_offers = []
         print(f"Discovery: Searching {len(self.discovery_networks)} discovery sources")
 
         for network in self.discovery_networks:
@@ -182,6 +210,14 @@ class OfferAggregator:
         # Analyze potential of ALL offers
         if analyze_potential and all_offers:
             all_offers = self.analyze_offers_potential(all_offers, analyze_top_n=len(all_offers))
+
+        # Write results to Google Sheets cache
+        if self.sheets_cache and all_offers:
+            try:
+                self.sheets_cache.write_offers(effective_keyword, all_offers)
+                print(f"Cache: Wrote {len(all_offers)} offers to Google Sheet")
+            except Exception as e:
+                print(f"Cache write error: {e}")
 
         return all_offers
 

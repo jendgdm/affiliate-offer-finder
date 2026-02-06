@@ -24,6 +24,16 @@ class Config:
     # SerpAPI
     SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")
 
+    # Google Sheets Integration
+    GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    GOOGLE_SHEET_URL = os.getenv("GOOGLE_SHEET_URL", "")
+
+    # Google OAuth Login
+    GOOGLE_OAUTH_CLIENT_JSON = os.getenv("GOOGLE_OAUTH_CLIENT_JSON", "")
+    ALLOWED_EMAIL_DOMAINS = [d.strip() for d in os.getenv("ALLOWED_EMAIL_DOMAINS", "").split(",") if d.strip()]
+    COOKIE_SECRET = os.getenv("COOKIE_SECRET", "aff-finder-default-cookie-key")
+    OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8501")
+
     @classmethod
     def is_impact_configured(cls) -> bool:
         """Check if Impact credentials are set."""
@@ -48,3 +58,13 @@ class Config:
     def is_serpapi_configured(cls) -> bool:
         """Check if SerpAPI credentials are set."""
         return bool(cls.SERPAPI_API_KEY)
+
+    @classmethod
+    def is_sheets_configured(cls) -> bool:
+        """Check if Google Sheets credentials are set."""
+        return bool(cls.GOOGLE_SERVICE_ACCOUNT_JSON and cls.GOOGLE_SHEET_URL)
+
+    @classmethod
+    def is_oauth_configured(cls) -> bool:
+        """Check if Google OAuth credentials are set."""
+        return bool(cls.GOOGLE_OAUTH_CLIENT_JSON) and os.path.exists(cls.GOOGLE_OAUTH_CLIENT_JSON)

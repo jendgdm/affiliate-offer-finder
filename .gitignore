@@ -14,3 +14,5 @@ venv/
 .DS_Store
 .streamlit/secrets.toml
 .streamlit/*.log
+service-account*.json
+credentials*.json
