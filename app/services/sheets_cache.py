@@ -110,10 +110,13 @@ class SheetsCacheService:
             meta_ws.append_row([tab_name, date_str])
 
     def is_cache_fresh(self, keyword: str) -> bool:
-        last_updated = self.get_last_updated(keyword)
-        if last_updated is None:
+        """Check if cached data exists for this keyword (any date)."""
+        tab_name = self._sanitize_tab_name(keyword)
+        try:
+            ws = self.spreadsheet.worksheet(tab_name)
+            return ws.row_count > 1
+        except gspread.WorksheetNotFound:
             return False
-        return last_updated == date.today()
 
     # ------------------------------------------------------------------
     # Read / Write offers

@@ -29,9 +29,9 @@ class OfferAggregator:
             except Exception as e:
                 print(f"Google Sheets cache: Failed to connect - {e}")
 
-        # Impact removed per user request
-        # if Config.is_impact_configured():
-        #     self.networks.append(ImpactNetwork())
+        # Impact.com API (requires credentials)
+        if Config.is_impact_configured():
+            self.networks.append(ImpactNetwork())
 
         # Add discovery networks (no credentials needed)
         self.discovery_networks.append(OfferVaultNetwork())  # SerpAPI + Google search
@@ -193,6 +193,21 @@ class OfferAggregator:
 
         # Cache MISS or force refresh — fetch from APIs
         all_offers = []
+
+        # Search Impact.com API (if configured)
+        for network in self.networks:
+            try:
+                print(f"Discovery: Searching {network.network_name}...")
+                offers = network.search_offers(
+                    keyword=keyword,
+                    limit=limit
+                )
+                print(f"Discovery: Got {len(offers)} offers from {network.network_name}")
+                all_offers.extend(offers)
+            except Exception as e:
+                print(f"Error searching {network.network_name}: {e}")
+
+        # Search discovery networks (scraping-based)
         print(f"Discovery: Searching {len(self.discovery_networks)} discovery sources")
 
         for network in self.discovery_networks:

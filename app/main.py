@@ -4,6 +4,7 @@ import pandas as pd
 import html
 import re
 from services.aggregator import OfferAggregator
+from services.yt_serp import YTSerpService
 from config import Config
 
 # Page config
@@ -338,6 +339,91 @@ def get_aggregator():
     """Initialize and cache the aggregator."""
     return OfferAggregator()
 
+@st.cache_resource
+def get_yt_serp():
+    """Initialize and cache the YT SERP service."""
+    try:
+        return YTSerpService()
+    except Exception as e:
+        print(f"YT SERP service: Failed to connect - {e}")
+        return None
+
+def _render_gaps_cards(gaps):
+    """Render competitor gap cards as HTML."""
+    cards = '<div>'
+    for idx, g in enumerate(gaps, 1):
+        sv = g["search_volume"]
+        sv_display = f"{sv:,}" if sv < 10000 else f"{sv/1000:.0f}K"
+        views_display = f"{g['top_views']:,}"
+        silo_badge = f'<span class="custom-badge badge-info">{html.escape(g["silo"])}</span>' if g["silo"] else ''
+        nc = g["num_competitors"]
+        comp_color = "#ef4444" if nc >= 15 else "#f59e0b" if nc >= 8 else "#10b981"
+        cards += (
+            '<div class="offer-card" style="cursor:default">'
+            '<div style="display:flex;justify-content:space-between;align-items:center">'
+            '<div style="flex:1">'
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+            f'<span class="number-badge">{idx}</span>'
+            f'<span class="card-title" style="font-size:17px">{html.escape(g["keyword"])}</span>'
+            f'{silo_badge}'
+            '</div>'
+            '<div style="display:flex;gap:16px;font-size:13px;color:#64748b">'
+            f'<span><i class="bi bi-search" style="color:#3b82f6"></i> SV: <strong>{sv_display}</strong></span>'
+            f'<span style="color:{comp_color}"><i class="bi bi-people-fill"></i> <strong>{nc}</strong> competitors</span>'
+            f'<span><i class="bi bi-eye" style="color:#8b5cf6"></i> Top views: <strong>{views_display}</strong></span>'
+            '</div>'
+            '</div>'
+            '<div>'
+            '</div>'
+            '</div>'
+            f'<div style="margin-top:10px;font-size:12px;color:#94a3b8"><i class="bi bi-tv"></i> {html.escape(g["channels"][:80])}</div>'
+            '</div>'
+        )
+    cards += '</div>'
+    st.markdown(cards, unsafe_allow_html=True)
+
+
+def _render_outranking_cards(outranking):
+    """Render outranking cards as HTML."""
+    cards = '<div>'
+    for idx, o in enumerate(outranking, 1):
+        sv = o["search_volume"]
+        sv_display = f"{sv:,}" if sv < 10000 else f"{sv/1000:.0f}K"
+        silo_badge = f'<span class="custom-badge badge-info">{html.escape(o["silo"])}</span>' if o["silo"] else ''
+        rank_diff = o["dg_rank"] - o["best_comp_rank"]
+        dg_views = f"{o['dg_views']:,}"
+        comp_views = f"{o['top_comp_views']:,}"
+        cards += (
+            '<div class="offer-card" style="cursor:default">'
+            '<div style="display:flex;justify-content:space-between;align-items:center">'
+            '<div style="flex:1">'
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+            f'<span class="number-badge">{idx}</span>'
+            f'<span class="card-title" style="font-size:17px">{html.escape(o["keyword"])}</span>'
+            f'{silo_badge}'
+            '</div>'
+            '<div style="display:flex;gap:16px;font-size:13px;color:#64748b">'
+            f'<span><i class="bi bi-search" style="color:#3b82f6"></i> SV: <strong>{sv_display}</strong></span>'
+            f'<span style="color:#ef4444"><i class="bi bi-arrow-down"></i> Digidom: <strong>#{o["dg_rank"]}</strong></span>'
+            f'<span style="color:#10b981"><i class="bi bi-arrow-up"></i> Competitor: <strong>#{o["best_comp_rank"]}</strong></span>'
+            f'<span><i class="bi bi-people-fill" style="color:#f59e0b"></i> <strong>{o["num_competitors"]}</strong> competitors</span>'
+            '</div>'
+            '</div>'
+            '<div style="text-align:center">'
+            f'<div style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;padding:8px 16px;border-radius:20px;font-weight:700;font-size:13px;white-space:nowrap">-{rank_diff} ranks</div>'
+            '</div>'
+            '</div>'
+            f'<div style="margin-top:10px;display:flex;gap:20px;font-size:12px;color:#94a3b8">'
+            f'<span><i class="bi bi-eye"></i> Our views: {dg_views}</span>'
+            f'<span><i class="bi bi-eye-fill"></i> Top competitor views: {comp_views}</span>'
+            '</div>'
+            f'<div style="margin-top:6px;font-size:12px;color:#94a3b8"><i class="bi bi-tv"></i> {html.escape(o["channels"][:80])}</div>'
+            '</div>'
+        )
+    cards += '</div>'
+    st.markdown(cards, unsafe_allow_html=True)
+
+
 def main():
     """Main application."""
 
@@ -437,6 +523,16 @@ def main():
 
         limit = st.number_input("Max Results", min_value=5, max_value=200, value=50, step=5)
 
+        st.markdown("---")
+        browse_marketplace = st.toggle(
+            "Browse Impact Marketplace",
+            help="Show 489 Impact.com programs you can apply to"
+        )
+        show_competitor_gaps = st.toggle(
+            "YT Competitor Gaps",
+            help="Show keywords competitors rank for that we're missing"
+        )
+
         search_triggered = st.button("🔎 Search Offers", type="primary", use_container_width=True)
         force_refresh = st.button("🔄 Force Refresh", help="Bypass cache", use_container_width=True)
 
@@ -452,16 +548,18 @@ def main():
     # Main content header
     st.markdown('<h2 style="color: #1e293b; font-weight: 700; margin-bottom: 24px;"><i class="bi bi-grid-3x3-gap"></i> Search Results</h2>', unsafe_allow_html=True)
 
-    # Detect keyword change — only re-fetch when keyword changes (not mode)
-    if 'previous_keyword' in st.session_state and st.session_state.previous_keyword != keyword:
+    # Detect keyword or marketplace toggle change — re-fetch when source changes
+    current_source = "marketplace" if browse_marketplace else (keyword or "software")
+    if 'previous_source' in st.session_state and st.session_state.previous_source != current_source:
         if 'all_offers' in st.session_state:
             del st.session_state.all_offers
-    st.session_state.previous_keyword = keyword
+    st.session_state.previous_source = current_source
 
     # Fetch all offers once, then filter by mode (mode change = instant, no re-fetch)
     need_fetch = search_triggered or force_refresh or 'all_offers' not in st.session_state
 
-    if need_fetch:
+    if need_fetch and not show_competitor_gaps:
+
         # Show loading spinner immediately while data loads
         loading_placeholder = st.empty()
         loading_placeholder.markdown("""
@@ -475,30 +573,87 @@ def main():
         <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
         """, unsafe_allow_html=True)
 
-        all_offers = aggregator.search_discovery_networks(
-            keyword=keyword if keyword else None,
-            limit=limit * 2,
-            analyze_potential=True,
-            force_refresh=force_refresh
-        )
+        if browse_marketplace:
+            # Load marketplace programs directly from Google Sheets
+            all_offers = []
+            if aggregator.sheets_cache:
+                try:
+                    all_offers = aggregator.sheets_cache.read_offers("impact_marketplace")
+                except Exception as e:
+                    print(f"Error reading marketplace: {e}")
+        else:
+            all_offers = aggregator.search_discovery_networks(
+                keyword=keyword if keyword else None,
+                limit=limit * 2,
+                analyze_potential=True,
+                force_refresh=force_refresh
+            )
 
         st.session_state.all_offers = all_offers
         loading_placeholder.empty()
 
-    # Filter by mode from in-memory cache (instant, no API/sheets call)
-    all_offers = st.session_state.get('all_offers', [])
-    if search_mode == "Direct":
-        offers = [o for o in all_offers if o.category == "Direct Brand"]
-    elif search_mode == "Blog Post":
-        offers = [o for o in all_offers if o.category == "Blog Post"]
-    else:
-        offers = all_offers
-    offers = offers[:limit]
-    st.session_state.offers = offers
-    st.session_state.search_mode = search_mode
+    # =====================================================================
+    # YT Competitor Gaps (when toggled, replaces the offers view)
+    # =====================================================================
+    if show_competitor_gaps:
+        yt_serp = get_yt_serp()
+        if yt_serp:
+            st.markdown('<h2 style="color:#1e293b;font-weight:700;margin-bottom:8px"><i class="bi bi-exclamation-triangle" style="color:#f59e0b"></i> Competitor Gaps</h2>', unsafe_allow_html=True)
+            st.caption("Keywords competitors rank for on YouTube that Digidom has no video for yet")
 
-    # Display results
-    if 'offers' in st.session_state and st.session_state.offers:
+            if 'competitor_gaps' not in st.session_state:
+                with st.spinner("Loading competitor gaps from BigQuery..."):
+                    st.session_state.competitor_gaps = yt_serp.get_competitor_gaps(limit=50)
+            if 'competitor_outranking' not in st.session_state:
+                with st.spinner("Loading competitor outranking data..."):
+                    st.session_state.competitor_outranking = yt_serp.get_competitor_outranking(limit=50)
+
+            gaps = st.session_state.competitor_gaps
+            outranking = st.session_state.competitor_outranking
+
+            tab1, tab2 = st.tabs(["Missing Keywords", "Being Outranked"])
+
+            with tab1:
+                if gaps:
+                    st.warning(f"{len(gaps)} keywords where competitors rank but Digidom has NO video")
+                    _render_gaps_cards(gaps)
+                    gaps_df = pd.DataFrame(gaps)
+                    st.download_button("Download Missing Keywords CSV", gaps_df.to_csv(index=False).encode('utf-8'), "competitor_gaps.csv", "text/csv", use_container_width=True)
+                else:
+                    st.info("No competitor gaps found.")
+
+            with tab2:
+                if outranking:
+                    st.info(f"{len(outranking)} keywords where competitors rank higher than Digidom")
+                    _render_outranking_cards(outranking)
+                    out_df = pd.DataFrame(outranking)
+                    st.download_button("Download Outranked Keywords CSV", out_df.to_csv(index=False).encode('utf-8'), "competitor_outranking.csv", "text/csv", use_container_width=True)
+                else:
+                    st.info("No outranking found.")
+        else:
+            st.warning("BigQuery YT SERP service not available. Check service account credentials.")
+
+    # =====================================================================
+    # Offers View (default when competitor gaps toggle is OFF)
+    # =====================================================================
+    if not show_competitor_gaps:
+
+        # Filter by mode from in-memory cache (instant, no API/sheets call)
+        all_offers = st.session_state.get('all_offers', [])
+        if search_mode == "Direct":
+            offers = [o for o in all_offers if o.category == "Direct Brand"]
+        elif search_mode == "Blog Post":
+            offers = [o for o in all_offers if o.category == "Blog Post"]
+        else:
+            offers = all_offers
+        # Sort by commission value (highest first)
+        offers.sort(key=lambda o: o.commission_value or 0, reverse=True)
+        offers = offers[:limit]
+        st.session_state.offers = offers
+        st.session_state.search_mode = search_mode
+
+    # Display results (only when not showing competitor gaps)
+    if not show_competitor_gaps and 'offers' in st.session_state and st.session_state.offers:
         offers = st.session_state.offers
         mode = st.session_state.get('search_mode', 'Direct')
 
@@ -727,7 +882,7 @@ def main():
                 use_container_width=True
             )
 
-    elif 'offers' in st.session_state:
+    elif not show_competitor_gaps and 'offers' in st.session_state:
         st.markdown("""
         <div class="alert alert-warning" role="alert" style="border-left: 4px solid #f59e0b; background-color: #fffbeb; border-radius: 8px; padding: 20px; text-align: center;">
             <i class="bi bi-exclamation-triangle" style="font-size: 24px; color: #f59e0b;"></i>
@@ -736,7 +891,7 @@ def main():
             </p>
         </div>
         """, unsafe_allow_html=True)
-    else:
+    elif not show_competitor_gaps:
         st.markdown("""
         <div style="text-align: center; padding: 60px 20px; background-color: #f8fafc; border-radius: 12px; border: 2px dashed #cbd5e1;">
             <i class="bi bi-search" style="font-size: 64px; color: #cbd5e1;"></i>

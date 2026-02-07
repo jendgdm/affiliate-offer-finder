@@ -1,5 +1,5 @@
 """Unified offer data model across all affiliate networks."""
-from typing import Optional, List
+from typing import Any, Optional, List
 from pydantic import BaseModel, Field
 
 
@@ -46,7 +46,7 @@ class Offer(BaseModel):
     potential_score: Optional[int] = Field(None, description="Overall potential score (0-100)")
     potential_rating: Optional[str] = Field(None, description="Rating: Excellent, Good, Fair, Poor")
     potential_analysis: Optional[str] = Field(None, description="Text analysis of potential")
-    related_keywords: Optional[List[str]] = Field(None, description="Related search keywords for SEO")
+    related_keywords: Optional[List[Any]] = Field(None, description="Related search keywords for SEO")
 
     # Scalability Metrics
     scalability_score: Optional[int] = Field(None, description="Overall scalability score (0-100)")
